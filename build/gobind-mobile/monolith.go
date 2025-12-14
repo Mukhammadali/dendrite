@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/element-hq/dendrite/appservice"
@@ -46,11 +47,13 @@ type DendriteMonolith struct {
 	StorageDirectory string
 	CacheDirectory   string
 
-	listener   net.Listener
-	httpServer *http.Server
-	processCtx *process.ProcessContext
-	userAPI    userapiAPI.UserInternalAPI
-	cfg        *config.Dendrite
+	listener       net.Listener
+	httpServer     *http.Server
+	processCtx     *process.ProcessContext
+	userAPI        userapiAPI.UserInternalAPI
+	cfg            *config.Dendrite
+	whatsappBridge *WhatsAppBridge
+	tokens         *AppserviceTokens
 }
 
 // Start initializes and starts the Dendrite server.
@@ -61,6 +64,23 @@ func (m *DendriteMonolith) Start() int {
 	// Set up logging
 	logrus.SetOutput(&logWriter{})
 	internal.SetupStdLogging()
+
+	// Strip file:// URI scheme if present (React Native passes URIs, not paths)
+	m.StorageDirectory = stripFileURIScheme(m.StorageDirectory)
+	m.CacheDirectory = stripFileURIScheme(m.CacheDirectory)
+
+	// Ensure storage directory exists
+	if err := os.MkdirAll(m.StorageDirectory, 0700); err != nil {
+		logrus.WithError(err).Fatal("Failed to create storage directory")
+		return 0
+	}
+
+	// Ensure cache directory exists
+	if m.CacheDirectory != "" {
+		if err := os.MkdirAll(m.CacheDirectory, 0700); err != nil {
+			logrus.WithError(err).Warn("Failed to create cache directory")
+		}
+	}
 
 	// Generate or load server key
 	keyPath := filepath.Join(m.StorageDirectory, "matrix_key.pem")
@@ -83,8 +103,19 @@ func (m *DendriteMonolith) Start() int {
 		}
 	}
 
+	// Generate tokens for appservices
+	m.tokens = GenerateAppserviceTokens()
+	logrus.Info("Generated appservice tokens")
+
 	// Create configuration
 	m.cfg = generateConfig(m.StorageDirectory, m.CacheDirectory, privateKey)
+
+	// Register appservices BEFORE deriving config
+	// This adds WhatsApp bridge and double puppet appservices
+	if err := registerAppservices(m.cfg, m.tokens); err != nil {
+		logrus.WithError(err).Error("Failed to register appservices")
+		// Continue anyway - Dendrite will work, just without bridge
+	}
 
 	// Initialize process context
 	m.processCtx = process.NewProcessContext()
@@ -170,11 +201,45 @@ func (m *DendriteMonolith) Start() int {
 		}
 	}()
 
-	return m.listener.Addr().(*net.TCPAddr).Port
+	port := m.listener.Addr().(*net.TCPAddr).Port
+
+	// Start WhatsApp bridge after Dendrite is fully running
+	go m.startWhatsAppBridge(port)
+
+	return port
 }
 
-// Stop gracefully shuts down the Dendrite server.
+// startWhatsAppBridge initializes and starts the mautrix-whatsapp bridge
+func (m *DendriteMonolith) startWhatsAppBridge(dendritePort int) {
+	// Wait for Dendrite to be fully ready
+	time.Sleep(3 * time.Second)
+
+	logrus.Info("Starting WhatsApp bridge...")
+
+	// Write bridge config
+	configPath, err := writeBridgeConfig(m.StorageDirectory, dendritePort, m.tokens)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to write bridge config")
+		return
+	}
+
+	// Create and start bridge
+	m.whatsappBridge = NewWhatsAppBridge()
+	if err := m.whatsappBridge.Start(configPath); err != nil {
+		logrus.WithError(err).Error("Failed to start WhatsApp bridge")
+		return
+	}
+
+	logrus.Info("WhatsApp bridge started successfully")
+}
+
+// Stop gracefully shuts down the Dendrite server and WhatsApp bridge.
 func (m *DendriteMonolith) Stop() {
+	// Stop WhatsApp bridge first
+	if m.whatsappBridge != nil {
+		m.whatsappBridge.Stop()
+	}
+
 	if m.httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -184,6 +249,19 @@ func (m *DendriteMonolith) Stop() {
 		m.processCtx.ShutdownDendrite()
 		m.processCtx.WaitForComponentsToFinish()
 	}
+}
+
+// IsWhatsAppBridgeRunning returns whether the WhatsApp bridge is running
+func (m *DendriteMonolith) IsWhatsAppBridgeRunning() bool {
+	if m.whatsappBridge == nil {
+		return false
+	}
+	return m.whatsappBridge.IsRunning()
+}
+
+// GetWhatsAppBotUserID returns the Matrix user ID of the WhatsApp bridge bot
+func (m *DendriteMonolith) GetWhatsAppBotUserID() string {
+	return "@whatsappbot:localhost"
 }
 
 // BaseURL returns the base URL of the running server.
@@ -246,27 +324,33 @@ func (m *DendriteMonolith) RegisterDevice(localpart, deviceID string) (string, e
 }
 
 // generateConfig creates a Dendrite configuration for mobile use.
+// Uses separate SQLite databases like the pinecone demo.
 func generateConfig(storageDir, cacheDir string, privateKey ed25519.PrivateKey) *config.Dendrite {
 	cfg := &config.Dendrite{}
 	cfg.Defaults(config.DefaultOpts{
 		Generate:       true,
-		SingleDatabase: true,
+		SingleDatabase: false, // Use separate SQLite databases
 	})
 
 	cfg.Global.ServerName = spec.ServerName("localhost")
 	cfg.Global.PrivateKey = privateKey
 	cfg.Global.KeyID = gomatrixserverlib.KeyID("ed25519:dendrite")
-	cfg.Global.JetStream.StoragePath = config.Path(filepath.Join(storageDir, "jetstream"))
+
+	// JetStream storage
+	jetstreamPath := filepath.Join(storageDir, "jetstream")
+	os.MkdirAll(jetstreamPath, 0700)
+	cfg.Global.JetStream.StoragePath = config.Path(jetstreamPath)
 	cfg.Global.JetStream.InMemory = true
 
-	// Single SQLite database
-	dbPath := filepath.Join(storageDir, "dendrite.db")
-	cfg.Global.DatabaseOptions = config.DatabaseOptions{
-		ConnectionString:       config.DataSource(fmt.Sprintf("file:%s?_journal=WAL", dbPath)),
-		MaxOpenConnections:     10,
-		MaxIdleConnections:     2,
-		ConnMaxLifetimeSeconds: -1,
-	}
+	// Separate SQLite databases (like pinecone demo)
+	dbPrefix := filepath.Join(storageDir, "dendrite")
+	cfg.UserAPI.AccountDatabase.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-account.db", dbPrefix))
+	cfg.MediaAPI.Database.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-mediaapi.db", dbPrefix))
+	cfg.SyncAPI.Database.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-syncapi.db", dbPrefix))
+	cfg.RoomServer.Database.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-roomserver.db", dbPrefix))
+	cfg.KeyServer.Database.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-keyserver.db", dbPrefix))
+	cfg.FederationAPI.Database.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-federationapi.db", dbPrefix))
+	cfg.RelayAPI.Database.ConnectionString = config.DataSource(fmt.Sprintf("file:%s-relayapi.db", dbPrefix))
 
 	// Enable open registration
 	cfg.ClientAPI.RegistrationDisabled = false
@@ -276,7 +360,9 @@ func generateConfig(storageDir, cacheDir string, privateKey ed25519.PrivateKey) 
 	cfg.UserAPI.BCryptCost = 4
 
 	// Media storage
-	cfg.MediaAPI.BasePath = config.Path(filepath.Join(storageDir, "media"))
+	mediaPath := filepath.Join(storageDir, "media")
+	os.MkdirAll(mediaPath, 0700)
+	cfg.MediaAPI.BasePath = config.Path(mediaPath)
 	cfg.MediaAPI.MaxFileSizeBytes = config.FileSizeBytes(10 * 1024 * 1024) // 10MB
 
 	// Disable federation
@@ -290,15 +376,12 @@ func generateConfig(storageDir, cacheDir string, privateKey ed25519.PrivateKey) 
 	cfg.Global.Cache.EstimatedMaxSize = 1024 * 1024 * 16 // 16MB
 	cfg.Global.Cache.MaxAge = time.Hour
 
+	// Derive any dependent config
+	if err := cfg.Derive(); err != nil {
+		logrus.WithError(err).Warn("Failed to derive config")
+	}
+
 	return cfg
-}
-
-// logWriter implements io.Writer for logrus output on mobile.
-type logWriter struct{}
-
-func (w *logWriter) Write(p []byte) (n int, err error) {
-	// On mobile, logs go to system log via logrus
-	return len(p), nil
 }
 
 // savePrivateKey saves an Ed25519 private key to a PEM file.
@@ -315,4 +398,16 @@ func loadPrivateKey(path string) (ed25519.PrivateKey, error) {
 		return nil, err
 	}
 	return hex.DecodeString(string(data))
+}
+
+// stripFileURIScheme removes file:// or file: prefix from a path
+// React Native on iOS passes URIs like "file:///var/mobile/..." but Go needs plain paths
+func stripFileURIScheme(path string) string {
+	if strings.HasPrefix(path, "file://") {
+		return strings.TrimPrefix(path, "file://")
+	}
+	if strings.HasPrefix(path, "file:") {
+		return strings.TrimPrefix(path, "file:")
+	}
+	return path
 }
