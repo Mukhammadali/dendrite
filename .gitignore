@@ -75,6 +75,8 @@ docs/_site
 
 media_store/
 build
+# Allow gobind-mobile source files for mobile builds
+!build/gobind-mobile/
 
 # golang workspaces
 go.work*
