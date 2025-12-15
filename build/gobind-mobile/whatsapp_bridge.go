@@ -153,8 +153,8 @@ bridge:
     command_prefix: '!wa'
     personal_filtering_spaces: true
     permissions:
-        '*': relay
-        'localhost': admin
+        '*': user
+        '@whatsappbot:localhost': admin
 
 database:
     type: sqlite3-fk-wal
