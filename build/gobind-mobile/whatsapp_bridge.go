@@ -139,12 +139,21 @@ func (wb *WhatsAppBridge) WaitForReady(timeout time.Duration) bool {
 func generateBridgeConfig(dataPath string, dendritePort int, tokens *AppserviceTokens) string {
 	return fmt.Sprintf(`# Auto-generated mautrix-whatsapp config for embedded use
 network:
-    os_name: Mobile
+    os_name: Cirano Mobile
     browser_name: unknown
-    displayname_template: "{{.Phone}} (WhatsApp)"
+    displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName}}] (WhatsApp)"
     history_sync:
-        max_initial_conversations: 25
-        request_full_sync: false
+        max_initial_conversations: -1
+        request_full_sync: true
+        full_sync_config:
+            days_limit: 365
+            size_mb_limit: null
+            storage_quota_mb: null
+        media_requests:
+            auto_request_media: false
+            request_method: immediate
+            request_local_time: 120
+            max_async_handle: 1
     call_start_notices: false
     identity_change_notices: false
     send_presence_on_typing: false
@@ -152,6 +161,7 @@ network:
 bridge:
     command_prefix: '!wa'
     personal_filtering_spaces: true
+    private_chat_portal_meta: true
     permissions:
         '*': user
         '@whatsappbot:localhost': admin
@@ -197,8 +207,16 @@ encryption:
 
 backfill:
     enabled: true
-    max_initial_messages: 50
-    max_catchup_messages: 50
+    max_initial_messages: 100
+    max_catchup_messages: 100
+    unread_hours_threshold: -1
+    threads:
+        max_initial_messages: 100
+    queue:
+        enabled: true
+        batch_size: 100
+        batch_delay: 20
+        max_batches: -1
 
 logging:
     min_level: info
