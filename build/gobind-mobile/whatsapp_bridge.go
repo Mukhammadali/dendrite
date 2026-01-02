@@ -158,7 +158,7 @@ network:
     call_start_notices: false
     identity_change_notices: false
     send_presence_on_typing: false
-		initial_auto_reconnect: true
+    initial_auto_reconnect: true
 
 bridge:
     command_prefix: '!wa'
