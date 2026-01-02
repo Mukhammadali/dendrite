@@ -143,8 +143,9 @@ network:
     browser_name: unknown
     displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName}}] (WhatsApp)"
     history_sync:
-        max_initial_conversations: -1
+        max_initial_conversations: 20
         request_full_sync: true
+        dispatch_wait: 5s
         full_sync_config:
             days_limit: 365
             size_mb_limit: null
