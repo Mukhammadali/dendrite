@@ -214,7 +214,7 @@ backfill:
     threads:
         max_initial_messages: 100
     queue:
-        enabled: true
+        enabled: false
         batch_size: 100
         batch_delay: 20
         max_batches: -1
