@@ -143,11 +143,11 @@ network:
     browser_name: unknown
     displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName}}] (WhatsApp)"
     history_sync:
-        max_initial_conversations: 20
+        max_initial_conversations: -1
         request_full_sync: true
-        dispatch_wait: 5s
+        dispatch_wait: 5s  # If history sync is incomplete, try 30s or 1m (default)
         full_sync_config:
-            days_limit: 365
+            days_limit: 1095
             size_mb_limit: null
             storage_quota_mb: null
         media_requests:
@@ -208,11 +208,11 @@ encryption:
 
 backfill:
     enabled: true
-    max_initial_messages: 100
-    max_catchup_messages: 100
+    max_initial_messages: -1
+    max_catchup_messages: -1
     unread_hours_threshold: -1
     threads:
-        max_initial_messages: 100
+        max_initial_messages: -1
     queue:
         enabled: false
         batch_size: 100
