@@ -147,7 +147,7 @@ network:
         request_full_sync: true
         dispatch_wait: 5s  # If history sync is incomplete, try 30s or 1m (default)
         full_sync_config:
-            days_limit: 1095
+            days_limit: 1095 # 3 years
             size_mb_limit: null
             storage_quota_mb: null
         media_requests:
@@ -209,7 +209,7 @@ encryption:
 
 backfill:
     enabled: true
-    max_initial_messages: -1
+    max_initial_messages: 10000
     max_catchup_messages: -1
     unread_hours_threshold: -1
     threads:
