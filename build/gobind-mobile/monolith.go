@@ -211,9 +211,6 @@ func (m *DendriteMonolith) Start() int {
 
 // startWhatsAppBridge initializes and starts the mautrix-whatsapp bridge
 func (m *DendriteMonolith) startWhatsAppBridge(dendritePort int) {
-	// Wait for Dendrite to be fully ready
-	time.Sleep(3 * time.Second)
-
 	logrus.Info("Starting WhatsApp bridge...")
 
 	// Write bridge config
