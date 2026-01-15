@@ -12,11 +12,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -259,6 +261,44 @@ func (m *DendriteMonolith) IsWhatsAppBridgeRunning() bool {
 // GetWhatsAppBotUserID returns the Matrix user ID of the WhatsApp bridge bot
 func (m *DendriteMonolith) GetWhatsAppBotUserID() string {
 	return "@whatsappbot:localhost"
+}
+
+// VersionInfo contains version information for all components
+type VersionInfo struct {
+	Dendrite       string `json:"dendrite"`
+	WhatsAppBridge string `json:"whatsapp_bridge"`
+	Whatsmeow      string `json:"whatsmeow"`
+	Mautrix        string `json:"mautrix"`
+}
+
+// GetVersionInfo returns version information for Dendrite and bridges as JSON
+func (m *DendriteMonolith) GetVersionInfo() string {
+	info := VersionInfo{
+		Dendrite:       internal.VersionString(),
+		WhatsAppBridge: "unknown",
+		Whatsmeow:      "unknown",
+		Mautrix:        "unknown",
+	}
+
+	// Get module versions from build info
+	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range buildInfo.Deps {
+			switch dep.Path {
+			case "go.mau.fi/mautrix-whatsapp":
+				info.WhatsAppBridge = dep.Version
+			case "go.mau.fi/whatsmeow":
+				info.Whatsmeow = dep.Version
+			case "maunium.net/go/mautrix":
+				info.Mautrix = dep.Version
+			}
+		}
+	}
+
+	jsonBytes, err := json.Marshal(info)
+	if err != nil {
+		return `{"error": "failed to marshal version info"}`
+	}
+	return string(jsonBytes)
 }
 
 // BaseURL returns the base URL of the running server.
