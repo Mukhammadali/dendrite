@@ -225,7 +225,11 @@ logging:
     writers:
         - type: stdout
           format: pretty-colored
-`, dataPath, dendritePort, tokens.WAASToken, tokens.WAHSToken, tokens.DPASToken)
+
+provisioning:
+    prefix: /_matrix/provision
+    shared_secret: "%s"
+`, dataPath, dendritePort, tokens.WAASToken, tokens.WAHSToken, tokens.DPASToken, tokens.ProvisioningSecret)
 }
 
 // writeBridgeConfig writes the bridge configuration to disk

@@ -19,6 +19,8 @@ type AppserviceTokens struct {
 	WAHSToken string // Homeserver token (homeserver -> bridge)
 	// Double puppet token (only as_token matters)
 	DPASToken string
+	// Provisioning API shared secret
+	ProvisioningSecret string
 }
 
 // generateSecureToken creates a cryptographically secure random token
@@ -35,9 +37,10 @@ func generateSecureToken() string {
 // GenerateAppserviceTokens creates new tokens for all appservices
 func GenerateAppserviceTokens() *AppserviceTokens {
 	return &AppserviceTokens{
-		WAASToken: generateSecureToken(),
-		WAHSToken: generateSecureToken(),
-		DPASToken: generateSecureToken(),
+		WAASToken:          generateSecureToken(),
+		WAHSToken:          generateSecureToken(),
+		DPASToken:          generateSecureToken(),
+		ProvisioningSecret: generateSecureToken(),
 	}
 }
 
