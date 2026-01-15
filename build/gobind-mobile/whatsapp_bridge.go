@@ -229,6 +229,7 @@ logging:
 provisioning:
     prefix: /_matrix/provision
     shared_secret: "%s"
+    allow_matrix_auth: true
 `, dataPath, dendritePort, tokens.WAASToken, tokens.WAHSToken, tokens.DPASToken, tokens.ProvisioningSecret)
 }
 
