@@ -147,11 +147,11 @@ network:
         request_full_sync: true
         dispatch_wait: 5s  # If history sync is incomplete, try 30s or 1m (default)
         full_sync_config:
-            days_limit: 1095 # 3 years
+            days_limit: 90 # 3 months
             size_mb_limit: null
             storage_quota_mb: null
         media_requests:
-            auto_request_media: true
+            auto_request_media: false
             request_method: immediate
             request_local_time: 120
             max_async_handle: 1
@@ -159,6 +159,8 @@ network:
     identity_change_notices: false
     send_presence_on_typing: false
     initial_auto_reconnect: true
+		disable_status_broadcast_send: true
+		direct_media_auto_request: false
 
 bridge:
     command_prefix: '!wa'
