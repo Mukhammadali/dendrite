@@ -406,6 +406,7 @@ func generateConfig(storageDir, cacheDir string, privateKey ed25519.PrivateKey) 
 	mediaPath := filepath.Join(storageDir, "media")
 	os.MkdirAll(mediaPath, 0700)
 	cfg.MediaAPI.BasePath = config.Path(mediaPath)
+	cfg.MediaAPI.AbsBasePath = config.Path(mediaPath) // Must set AbsBasePath for temp dir creation
 	cfg.MediaAPI.MaxFileSizeBytes = config.FileSizeBytes(10 * 1024 * 1024) // 10MB
 
 	// Disable federation
