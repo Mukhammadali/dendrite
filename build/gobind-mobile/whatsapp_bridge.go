@@ -164,6 +164,8 @@ bridge:
     command_prefix: '!wa'
     personal_filtering_spaces: true
     private_chat_portal_meta: true
+    user_avatar_sync: true
+    chat_meta_sync: true
     permissions:
         '*': user
         '@whatsappbot:localhost': admin
