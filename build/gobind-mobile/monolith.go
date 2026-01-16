@@ -36,6 +36,7 @@ import (
 	"github.com/element-hq/dendrite/setup/process"
 	"github.com/element-hq/dendrite/userapi"
 	userapiAPI "github.com/element-hq/dendrite/userapi/api"
+	"github.com/gorilla/mux"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/gomatrixserverlib/fclient"
 	"github.com/matrix-org/gomatrixserverlib/spec"
@@ -188,9 +189,14 @@ func (m *DendriteMonolith) Start() int {
 		return 0
 	}
 
+	// Create combined router for Client + Media APIs (like dendritejs-pinecone)
+	httpRouter := mux.NewRouter().SkipClean(true).UseEncodedPath()
+	httpRouter.PathPrefix(httputil.PublicClientPathPrefix).Handler(routers.Client)
+	httpRouter.PathPrefix(httputil.PublicMediaPathPrefix).Handler(routers.Media)
+
 	// Create HTTP server
 	m.httpServer = &http.Server{
-		Handler:      routers.Client,
+		Handler:      httpRouter,
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 60 * time.Second,
 	}
