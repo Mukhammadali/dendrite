@@ -151,7 +151,7 @@ network:
             size_mb_limit: null
             storage_quota_mb: null
         media_requests:
-            auto_request_media: false
+            auto_request_media: true
             request_method: immediate
             request_local_time: 120
             max_async_handle: 1
