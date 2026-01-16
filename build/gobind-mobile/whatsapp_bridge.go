@@ -159,8 +159,8 @@ network:
     identity_change_notices: false
     send_presence_on_typing: false
     initial_auto_reconnect: true
-		disable_status_broadcast_send: true
-		direct_media_auto_request: false
+    disable_status_broadcast_send: true
+    direct_media_auto_request: false
 
 bridge:
     command_prefix: '!wa'
