@@ -192,7 +192,7 @@ func (m *DendriteMonolith) Start() int {
 	// Create combined router for Client + Media APIs (like dendritejs-pinecone)
 	httpRouter := mux.NewRouter().SkipClean(true).UseEncodedPath()
 	httpRouter.PathPrefix(httputil.PublicClientPathPrefix).Handler(routers.Client)
-	httpRouter.PathPrefix(httputil.PublicMediaPathPrefix).Handler(routers.Media)
+	// httpRouter.PathPrefix(httputil.PublicMediaPathPrefix).Handler(routers.Media)
 
 	// Create HTTP server
 	m.httpServer = &http.Server{
