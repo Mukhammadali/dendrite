@@ -256,6 +256,13 @@ func (m *DendriteMonolith) Stop() {
 	}
 }
 
+// Restart stops and restarts the Dendrite server and WhatsApp bridge.
+// Returns the new port number the server is listening on.
+func (m *DendriteMonolith) Restart() int {
+	m.Stop()
+	return m.Start()
+}
+
 // IsWhatsAppBridgeRunning returns whether the WhatsApp bridge is running
 func (m *DendriteMonolith) IsWhatsAppBridgeRunning() bool {
 	if m.whatsappBridge == nil {
