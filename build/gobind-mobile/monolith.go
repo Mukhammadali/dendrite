@@ -406,6 +406,9 @@ func generateConfig(storageDir, cacheDir string, privateKey ed25519.PrivateKey) 
 	cfg.ClientAPI.RegistrationDisabled = false
 	cfg.ClientAPI.OpenRegistrationWithoutVerificationEnabled = true
 
+	// Disable rate limiting for local mobile use
+	cfg.ClientAPI.RateLimiting.Enabled = false
+
 	// Lower bcrypt cost for mobile
 	cfg.UserAPI.BCryptCost = 4
 
