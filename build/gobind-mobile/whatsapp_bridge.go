@@ -141,13 +141,13 @@ func generateBridgeConfig(dataPath string, dendritePort int, tokens *AppserviceT
 network:
     os_name: Cirano Mobile
     browser_name: unknown
-    displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName}}] (WhatsApp)"
+    displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName .JID}}] (WhatsApp)"
     history_sync:
         max_initial_conversations: -1
-        request_full_sync: true
-        dispatch_wait: 5s  # If history sync is incomplete, try 30s or 1m (default)
+        request_full_sync: false
+        dispatch_wait: 5s
         full_sync_config:
-            days_limit: 90 # 3 months
+            days_limit: 0
             size_mb_limit: null
             storage_quota_mb: null
         media_requests:
@@ -213,13 +213,13 @@ encryption:
 
 backfill:
     enabled: true
-    max_initial_messages: 10000
+    max_initial_messages: 0
     max_catchup_messages: -1
     unread_hours_threshold: -1
     threads:
-        max_initial_messages: -1
+        max_initial_messages: 0
     queue:
-        enabled: false
+        enabled: true
         batch_size: 100
         batch_delay: 20
         max_batches: -1

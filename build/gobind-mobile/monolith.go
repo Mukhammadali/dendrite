@@ -314,6 +314,20 @@ func (m *DendriteMonolith) GetVersionInfo() string {
 	return string(jsonBytes)
 }
 
+// GetWhatsAppBridgeConfig returns the current WhatsApp bridge config YAML.
+// Returns the config file contents from disk, or an error message if unavailable.
+func (m *DendriteMonolith) GetWhatsAppBridgeConfig() string {
+	if m.StorageDirectory == "" {
+		return "error: storage directory not set"
+	}
+	configPath := filepath.Join(m.StorageDirectory, "whatsapp", "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return string(data)
+}
+
 // BaseURL returns the base URL of the running server.
 func (m *DendriteMonolith) BaseURL() string {
 	if m.listener == nil {
