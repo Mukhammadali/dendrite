@@ -144,7 +144,7 @@ network:
     displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName .JID}}] (WhatsApp)"
     history_sync:
         max_initial_conversations: -1
-        request_full_sync: false
+        request_full_sync: true
         dispatch_wait: 5s
         full_sync_config:
             days_limit: 0
