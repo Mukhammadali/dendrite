@@ -225,8 +225,50 @@ func (m *DendriteMonolith) asyncStart(port int) {
 		}
 	}()
 
-	// Start WhatsApp bridge after Dendrite is fully running
-	go m.startWhatsAppBridge(port)
+	// Start WhatsApp bridge once Dendrite is actually responsive — not just listening.
+	// The bridgev2 framework dispatches all history-sync portals in parallel (53+ at once
+	// in our case), and a cold-started Dendrite can't service that burst within the bridge's
+	// per-action context timeout (~15s), causing m.room.name events to silently fail.
+	// Warming Dendrite before the bridge connects to WhatsApp prevents the cascade.
+	go func() {
+		m.waitForDendriteWarm(port)
+		m.startWhatsAppBridge(port)
+	}()
+}
+
+// waitForDendriteWarm blocks until /_matrix/client/versions responds quickly twice in a row,
+// indicating that the homeserver is past its cold-start phase and can handle a burst of
+// concurrent requests from the bridge. Has a hard cap so it never blocks the bridge forever.
+func (m *DendriteMonolith) waitForDendriteWarm(port int) {
+	const (
+		fastResponseThreshold = 150 * time.Millisecond
+		consecutiveFastNeeded = 2
+		maxAttempts           = 60 // ~30s ceiling at 500ms cadence
+	)
+	url := fmt.Sprintf("http://127.0.0.1:%d/_matrix/client/versions", port)
+	client := &http.Client{Timeout: 5 * time.Second}
+	consecutiveFast := 0
+	for i := 0; i < maxAttempts; i++ {
+		start := time.Now()
+		resp, err := client.Get(url)
+		dur := time.Since(start)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 && dur < fastResponseThreshold {
+				consecutiveFast++
+				if consecutiveFast >= consecutiveFastNeeded {
+					logrus.Infof("Dendrite warm after %d probes (last response in %s) — starting bridge", i+1, dur)
+					return
+				}
+			} else {
+				consecutiveFast = 0
+			}
+		} else {
+			consecutiveFast = 0
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	logrus.Warn("Dendrite did not reach warm state within timeout; starting bridge anyway")
 }
 
 // startWhatsAppBridge initializes and starts the mautrix-whatsapp bridge
