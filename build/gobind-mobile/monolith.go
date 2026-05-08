@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/element-hq/dendrite/appservice"
 	"github.com/element-hq/dendrite/clientapi/userutil"
@@ -326,6 +329,121 @@ func (m *DendriteMonolith) GetWhatsAppBridgeConfig() string {
 		return fmt.Sprintf("error: %v", err)
 	}
 	return string(data)
+}
+
+// GetBridgeLogPath returns the absolute path to the WhatsApp bridge log file.
+// The log file is created when the bridge starts; this just returns where it lives.
+func (m *DendriteMonolith) GetBridgeLogPath() string {
+	if m.StorageDirectory == "" {
+		return ""
+	}
+	return filepath.Join(m.StorageDirectory, "whatsapp", "bridge.log")
+}
+
+// GetBridgeDBStats opens the bridge SQLite DB read-only and returns counts +
+// a list of portals with their Matrix room IDs. Returns JSON.
+func (m *DendriteMonolith) GetBridgeDBStats() string {
+	if m.StorageDirectory == "" {
+		return `{"error":"storage directory not set"}`
+	}
+	dbPath := filepath.Join(m.StorageDirectory, "whatsapp", "bridge.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return fmt.Sprintf(`{"error":"bridge.db not found: %v"}`, err)
+	}
+
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro&immutable=0")
+	if err != nil {
+		return fmt.Sprintf(`{"error":"open: %v"}`, err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	result := map[string]interface{}{}
+
+	// list of tables in DB
+	tables := []string{}
+	if rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"); err == nil {
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err == nil {
+				tables = append(tables, n)
+			}
+		}
+		rows.Close()
+	}
+	result["tables"] = tables
+
+	tableSet := map[string]bool{}
+	for _, t := range tables {
+		tableSet[t] = true
+	}
+
+	counts := map[string]int{}
+	countQ := func(label, q string) {
+		var n int
+		if err := db.QueryRow(q).Scan(&n); err == nil {
+			counts[label] = n
+		} else {
+			counts[label] = -1
+		}
+	}
+	if tableSet["portal"] {
+		countQ("portal_total", "SELECT COUNT(*) FROM portal")
+		countQ("portal_with_mxid", "SELECT COUNT(*) FROM portal WHERE mxid IS NOT NULL AND mxid != ''")
+	}
+	if tableSet["ghost"] {
+		countQ("ghost_total", "SELECT COUNT(*) FROM ghost")
+	}
+	if tableSet["message"] {
+		countQ("message_total", "SELECT COUNT(*) FROM message")
+	}
+	if tableSet["user_login"] {
+		countQ("user_login_total", "SELECT COUNT(*) FROM user_login")
+	}
+	if tableSet["whatsmeow_contacts"] {
+		countQ("whatsmeow_contacts_total", "SELECT COUNT(*) FROM whatsmeow_contacts")
+	}
+	if tableSet["whatsmeow_chat_settings"] {
+		countQ("whatsmeow_chat_settings_total", "SELECT COUNT(*) FROM whatsmeow_chat_settings")
+	}
+	result["counts"] = counts
+
+	// list portals
+	type portalRow struct {
+		ID          string `json:"id"`
+		Receiver    string `json:"receiver"`
+		MXID        string `json:"mxid"`
+		Name        string `json:"name"`
+		OtherUserID string `json:"other_user_id"`
+		RoomType    string `json:"room_type"`
+	}
+	portals := []portalRow{}
+	if tableSet["portal"] {
+		// schema may have different columns across versions; use fault-tolerant SELECT
+		rows, err := db.Query(`SELECT
+			COALESCE(id, ''),
+			COALESCE(receiver, ''),
+			COALESCE(mxid, ''),
+			COALESCE(name, ''),
+			COALESCE(other_user_id, ''),
+			COALESCE(room_type, '')
+			FROM portal ORDER BY id`)
+		if err == nil {
+			for rows.Next() {
+				var p portalRow
+				if err := rows.Scan(&p.ID, &p.Receiver, &p.MXID, &p.Name, &p.OtherUserID, &p.RoomType); err == nil {
+					portals = append(portals, p)
+				}
+			}
+			rows.Close()
+		} else {
+			result["portal_query_error"] = err.Error()
+		}
+	}
+	result["portals"] = portals
+
+	out, _ := json.Marshal(result)
+	return string(out)
 }
 
 // BaseURL returns the base URL of the running server.

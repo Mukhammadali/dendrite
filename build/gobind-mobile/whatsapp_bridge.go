@@ -141,7 +141,7 @@ func generateBridgeConfig(dataPath string, dendritePort int, tokens *AppserviceT
 network:
     os_name: Cirano Mobile
     browser_name: unknown
-    displayname_template: "{{.Phone}} [{{or .FullName .PushName .BusinessName .JID}}] (WhatsApp)"
+    displayname_template: '{{if .Phone}}{{.Phone}} {{end}}[{{or .FullName .PushName .BusinessName .RedactedPhone "Unknown"}}] (WhatsApp)'
     history_sync:
         max_initial_conversations: -1
         request_full_sync: true
@@ -166,8 +166,7 @@ bridge:
     command_prefix: '!wa'
     personal_filtering_spaces: true
     private_chat_portal_meta: true
-    user_avatar_sync: true
-    chat_meta_sync: true
+    kick_matrix_users: false
     permissions:
         '*': user
         '@whatsappbot:localhost': admin
@@ -219,22 +218,27 @@ backfill:
     threads:
         max_initial_messages: 0
     queue:
-        enabled: true
+        enabled: false
         batch_size: 100
         batch_delay: 20
         max_batches: -1
 
 logging:
-    min_level: info
+    min_level: debug
     writers:
         - type: stdout
           format: pretty-colored
+        - type: file
+          format: json
+          filename: %s/whatsapp/bridge.log
+          max_size: 10
+          max_backups: 3
 
 provisioning:
     prefix: /_matrix/provision
     shared_secret: "%s"
     allow_matrix_auth: true
-`, dataPath, dendritePort, tokens.WAASToken, tokens.WAHSToken, tokens.DPASToken, tokens.ProvisioningSecret)
+`, dataPath, dendritePort, tokens.WAASToken, tokens.WAHSToken, tokens.DPASToken, dataPath, tokens.ProvisioningSecret)
 }
 
 // writeBridgeConfig writes the bridge configuration to disk
