@@ -65,9 +65,7 @@ type DendriteMonolith struct {
 // Start initializes and starts the Dendrite server.
 // Returns the port number the server is listening on.
 func (m *DendriteMonolith) Start() int {
-	var err error
-
-	// Set up logging
+	// Set up logging (cheap)
 	logrus.SetOutput(&logWriter{})
 	internal.SetupStdLogging()
 
@@ -75,37 +73,59 @@ func (m *DendriteMonolith) Start() int {
 	m.StorageDirectory = stripFileURIScheme(m.StorageDirectory)
 	m.CacheDirectory = stripFileURIScheme(m.CacheDirectory)
 
-	// Ensure storage directory exists
+	// Ensure storage directory exists (cheap)
 	if err := os.MkdirAll(m.StorageDirectory, 0700); err != nil {
 		logrus.WithError(err).Fatal("Failed to create storage directory")
 		return 0
 	}
-
-	// Ensure cache directory exists
 	if m.CacheDirectory != "" {
 		if err := os.MkdirAll(m.CacheDirectory, 0700); err != nil {
 			logrus.WithError(err).Warn("Failed to create cache directory")
 		}
 	}
 
+	// Open the TCP listener BEFORE the heavy work so we have a port to return.
+	// The kernel will queue any incoming connections in the backlog until the HTTP
+	// server starts accepting them inside the async-init goroutine below. JS health
+	// polling (waitForServerReady) handles the brief gap.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to create listener")
+		return 0
+	}
+	m.listener = listener
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Defer the heavy initialisation (key gen, SQLite migrations, route setup, bridge
+	// start) to a goroutine so we can return the port immediately and unblock the
+	// JS thread on the iOS side. On a fresh install this work takes 5–8 seconds.
+	go m.asyncStart(port)
+
+	return port
+}
+
+// asyncStart performs the slow part of bootstrap (key/config/SQLite migrations,
+// HTTP route registration, bridge launch) on a background goroutine.
+func (m *DendriteMonolith) asyncStart(port int) {
+	var err error
+
 	// Generate or load server key
 	keyPath := filepath.Join(m.StorageDirectory, "matrix_key.pem")
 	var privateKey ed25519.PrivateKey
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+	if _, err = os.Stat(keyPath); os.IsNotExist(err) {
 		_, privateKey, err = ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			logrus.WithError(err).Fatal("Failed to generate key")
-			return 0
+			logrus.WithError(err).Error("Failed to generate key")
+			return
 		}
-		// Save the key
 		if err := savePrivateKey(keyPath, privateKey); err != nil {
 			logrus.WithError(err).Warn("Failed to save private key")
 		}
 	} else {
 		privateKey, err = loadPrivateKey(keyPath)
 		if err != nil {
-			logrus.WithError(err).Fatal("Failed to load private key")
-			return 0
+			logrus.WithError(err).Error("Failed to load private key")
+			return
 		}
 	}
 
@@ -116,8 +136,7 @@ func (m *DendriteMonolith) Start() int {
 	// Create configuration
 	m.cfg = generateConfig(m.StorageDirectory, m.CacheDirectory, privateKey)
 
-	// Register appservices BEFORE deriving config
-	// This adds WhatsApp bridge and double puppet appservices
+	// Register appservices BEFORE deriving config (writes registration files).
 	if err := registerAppservices(m.cfg, m.tokens); err != nil {
 		logrus.WithError(err).Error("Failed to register appservices")
 		// Continue anyway - Dendrite will work, just without bridge
@@ -136,7 +155,7 @@ func (m *DendriteMonolith) Start() int {
 	caches := caching.NewRistrettoCache(
 		m.cfg.Global.Cache.EstimatedMaxSize,
 		m.cfg.Global.Cache.MaxAge,
-		false, // disable metrics
+		false,
 	)
 
 	// Create NATS instance
@@ -148,10 +167,10 @@ func (m *DendriteMonolith) Start() int {
 		fclient.WithSkipVerify(true),
 	)
 
-	// Initialize room server
+	// Initialize room server (opens SQLite, runs migrations — slow on cold start)
 	rsAPI := roomserver.NewInternalAPI(m.processCtx, m.cfg, cm, &natsInstance, caches, false)
 
-	// Initialize federation API (required even for local-only)
+	// Initialize federation API
 	fsAPI := federationapi.NewInternalAPI(
 		m.processCtx, m.cfg, cm, &natsInstance, federationClient, rsAPI, caches, nil, false,
 	)
@@ -185,14 +204,7 @@ func (m *DendriteMonolith) Start() int {
 	// Add all public routes
 	monolith.AddAllPublicRoutes(m.processCtx, m.cfg, routers, cm, &natsInstance, caches, false)
 
-	// Create listener on random port
-	m.listener, err = net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to create listener")
-		return 0
-	}
-
-	// Create combined router for Client + Media APIs (like dendritejs-pinecone)
+	// Create combined router for Client + Media APIs
 	httpRouter := mux.NewRouter().SkipClean(true).UseEncodedPath()
 	httpRouter.PathPrefix(httputil.PublicClientPathPrefix).Handler(routers.Client)
 	// httpRouter.PathPrefix(httputil.PublicMediaPathPrefix).Handler(routers.Media)
@@ -204,7 +216,8 @@ func (m *DendriteMonolith) Start() int {
 		WriteTimeout: 60 * time.Second,
 	}
 
-	// Start serving
+	// Start serving — this drains any TCP connections the kernel queued while we
+	// were initialising, and unblocks JS waitForServerReady polling.
 	go func() {
 		logrus.Infof("Dendrite listening on %s", m.listener.Addr().String())
 		if err := m.httpServer.Serve(m.listener); err != nil && err != http.ErrServerClosed {
@@ -212,12 +225,8 @@ func (m *DendriteMonolith) Start() int {
 		}
 	}()
 
-	port := m.listener.Addr().(*net.TCPAddr).Port
-
 	// Start WhatsApp bridge after Dendrite is fully running
 	go m.startWhatsAppBridge(port)
-
-	return port
 }
 
 // startWhatsAppBridge initializes and starts the mautrix-whatsapp bridge
