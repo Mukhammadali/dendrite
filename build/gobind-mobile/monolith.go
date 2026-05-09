@@ -236,29 +236,46 @@ func (m *DendriteMonolith) asyncStart(port int) {
 	}()
 }
 
-// waitForDendriteWarm blocks until /_matrix/client/versions responds quickly twice in a row,
-// indicating that the homeserver is past its cold-start phase and can handle a burst of
-// concurrent requests from the bridge. Has a hard cap so it never blocks the bridge forever.
+// waitForDendriteWarm blocks until Dendrite is genuinely warm enough to handle the
+// bridge's parallel portal-creation burst (50+ concurrent /createRoom + state-event
+// calls). A "warm" state means:
+//
+//   1. /_matrix/client/versions responds fast 5 times in a row (the listener and basic
+//      router are up and not stalled on SQLite migrations).
+//   2. A dwell period has elapsed since first responsiveness so heavier code paths
+//      (caching layer, NATS streams, sqlite query plans) get a chance to settle.
+//
+// Probing /versions alone is not enough: it's served by a static handler that responds
+// in microseconds even while the room/user APIs are mid-migration. The dwell period
+// accounts for that asymmetry. Capped at 60s so we never block forever.
 func (m *DendriteMonolith) waitForDendriteWarm(port int) {
 	const (
-		fastResponseThreshold = 150 * time.Millisecond
-		consecutiveFastNeeded = 2
-		maxAttempts           = 60 // ~30s ceiling at 500ms cadence
+		fastResponseThreshold = 200 * time.Millisecond
+		consecutiveFastNeeded = 5
+		minDwellAfterFirstOK  = 8 * time.Second
+		probeCadence          = 500 * time.Millisecond
+		maxTotalWait          = 60 * time.Second
 	)
 	url := fmt.Sprintf("http://127.0.0.1:%d/_matrix/client/versions", port)
 	client := &http.Client{Timeout: 5 * time.Second}
 	consecutiveFast := 0
-	for i := 0; i < maxAttempts; i++ {
+	deadline := time.Now().Add(maxTotalWait)
+	var firstResponsive time.Time
+
+	for time.Now().Before(deadline) {
 		start := time.Now()
 		resp, err := client.Get(url)
 		dur := time.Since(start)
 		if err == nil {
 			resp.Body.Close()
-			if resp.StatusCode == 200 && dur < fastResponseThreshold {
-				consecutiveFast++
-				if consecutiveFast >= consecutiveFastNeeded {
-					logrus.Infof("Dendrite warm after %d probes (last response in %s) — starting bridge", i+1, dur)
-					return
+			if resp.StatusCode == 200 {
+				if firstResponsive.IsZero() {
+					firstResponsive = start
+				}
+				if dur < fastResponseThreshold {
+					consecutiveFast++
+				} else {
+					consecutiveFast = 0
 				}
 			} else {
 				consecutiveFast = 0
@@ -266,7 +283,16 @@ func (m *DendriteMonolith) waitForDendriteWarm(port int) {
 		} else {
 			consecutiveFast = 0
 		}
-		time.Sleep(500 * time.Millisecond)
+
+		dwellOK := !firstResponsive.IsZero() && time.Since(firstResponsive) >= minDwellAfterFirstOK
+		if consecutiveFast >= consecutiveFastNeeded && dwellOK {
+			logrus.Infof(
+				"Dendrite warm: %d consecutive fast probes, dwell %s since first OK — starting bridge",
+				consecutiveFast, time.Since(firstResponsive).Round(time.Millisecond),
+			)
+			return
+		}
+		time.Sleep(probeCadence)
 	}
 	logrus.Warn("Dendrite did not reach warm state within timeout; starting bridge anyway")
 }
